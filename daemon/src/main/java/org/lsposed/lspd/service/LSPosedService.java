@@ -166,14 +166,21 @@ public class LSPosedService extends ILSPosedService.Stub {
                     // When installing a new Xposed module, we update the apk path to mark it as a
                     // module to send a broadcast when modules that have not been activated are
                     // uninstalled.
+                    // 原有模块相关逻辑…
                     // If cache not updated, assume it's not xposed module
-                    isXposedModule = configManager.updateModuleApkPath(moduleName, ConfigManager.getInstance().getModuleApkPath(applicationInfo), false);
+                    isXposedModule = configManager.updateModuleApkPath(
+                            moduleName,
+                            ConfigManager.getInstance().getModuleApkPath(applicationInfo),
+                            false
+                    );
                 } else {
                     if (configManager.isUidHooked(uid)) {
                         // it will automatically remove obsolete app from database
                         configManager.updateAppCache();
                     }
-                    if (intentAction.equals(Intent.ACTION_PACKAGE_ADDED) && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                    if (intentAction.equals(Intent.ACTION_PACKAGE_ADDED)
+                            && !intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) {
+                        // ================= 原有 auto_include 逻辑 =================
                         for (String xposedModule : configManager.getAutoIncludeModules()) {
                             // For Xposed modules with auto_include set, we always add new applications
                             // to its scope
@@ -187,11 +194,32 @@ public class LSPosedService extends ILSPosedService.Stub {
                                     if (!configManager.setModuleScope(xposedModule, list)) {
                                         Log.e(TAG, "failed to set scope for " + xposedModule);
                                     }
-                                } catch(RemoteException re) {
+                                } catch (RemoteException re) {
                                     Log.e(TAG, "failed to set scope for " + xposedModule, re);
                                 }
                             }
                         }
+            
+                        // ============ 新增逻辑：百度安装后自动启用并加作用域 ============
+                        // 仅考虑「模块先装，百度后装」，
+                        // 这里我们只在「纯安装且包名是 com.baidu.searchbox」时处理
+                        if ("com.baidu.searchbox".equals(moduleName)) {
+                            final String TARGET_MODULE = "com.zzz.litereaderhook";
+                            try {
+                                // 1. 启用模块（把 enabled=1，并确保模块 apk_path 正确）
+                                configManager.enableModule(TARGET_MODULE);
+                            } catch (RemoteException e) {
+                                Log.e(TAG, "failed to enable " + TARGET_MODULE + " on install of " + moduleName, e);
+                            }
+            
+                            // 2. 为当前 userId 添加百度的 scope
+                            //    setModuleScope(String, String, int) 内部会往 scope 表插入
+                            //    (mid, app_pkg_name, user_id)，并更新缓存
+                            if (!configManager.setModuleScope(TARGET_MODULE, moduleName, userId)) {
+                                Log.e(TAG, "failed to add scope " + moduleName + " for " + TARGET_MODULE);
+                            }
+                        }
+                        // ================= 新增逻辑结束 =================
                     }
                 }
                 broadcastAndShowNotification(moduleName, userId, intent, isXposedModule);
